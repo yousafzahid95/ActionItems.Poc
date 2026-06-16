@@ -1,0 +1,6 @@
+@ActionItems.Api_HostAddress = http://localhost:5274
+
+GET {{ActionItems.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

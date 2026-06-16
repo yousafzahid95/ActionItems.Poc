@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ActionItems.Api/ActionItems.Api.csproj" />
+    <Project Path="src/ActionItems.Sdk/ActionItems.Sdk.csproj" />
+    <Project Path="src/ActionItems.Worker/ActionItems.Worker.csproj" />
+  </Folder>
+</Solution>
