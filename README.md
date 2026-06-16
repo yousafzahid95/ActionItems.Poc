@@ -33,9 +33,9 @@ A .NET proof-of-concept demonstrating **WorkAreaId-based database sharding** sha
 | Concern | Approach |
 |---------|----------|
 | Sharding key | `WorkAreaId` (GUID) |
-| Shard routing | Central catalog DB maps work areas → shard keys |
+| Shard routing | Catalog maps WorkAreaId → ClientId → ShardKey |
 | Connection strings | **Not** stored in the catalog — Key Vault secret names only |
-| Read scaling | `ApplicationIntent.Read` → read replica connection |
+| Read scaling | `ApplicationIntent.Read` → read replica(s), or master if none configured |
 | Writes | `ApplicationIntent.ReadWrite` → master connection |
 | New work areas | Round-robin shard assignment, mapping persisted to catalog |
 | Fast lookups | `IShardCache` (in-memory; swap for Redis) |
@@ -157,7 +157,9 @@ ActionItems.Sdk/
 │   │   ├── ShardCatalogDbContext.cs
 │   │   └── Entities/
 │   │       ├── ShardDefinition.cs
-│   │       └── WorkAreaShardMapping.cs
+│   │       ├── ShardReadReplica.cs
+│   │       ├── WorkAreaClientMapping.cs
+│   │       └── ClientShardMapping.cs
 │   ├── Caching/
 │   │   ├── IShardCache.cs
 │   │   └── InMemoryShardCache.cs
@@ -204,23 +206,38 @@ Each shard has its own database containing:
 | Column | Type | Notes |
 |--------|------|-------|
 | `ShardKey` | string | PK, e.g. `shard-1` |
-| `MasterKeyVaultSecretName` | string | Key Vault secret for write/master |
-| `ReadReplicaKeyVaultSecretName` | string | Key Vault secret for read replica |
+| `MasterKeyVaultSecretName` | string | Key Vault secret for write/master; also used for reads when no replicas exist |
 
-**WorkAreaShardMapping** — work area → shard assignment
+**ShardReadReplica** — optional read endpoints per shard (0, 1, or many)
+| Column | Type | Notes |
+|--------|------|-------|
+| `Id` | int | PK |
+| `ShardKey` | string | FK → ShardDefinition |
+| `KeyVaultSecretName` | string | Key Vault secret for this replica |
+| `Order` | int | Round-robin ordering when multiple replicas exist |
+
+**WorkAreaClientMapping** — work area → client (tenant)
 | Column | Type | Notes |
 |--------|------|-------|
 | `WorkAreaId` | GUID | PK |
+| `ClientId` | string | External client/tenant identifier |
+
+**ClientShardMapping** — client → shard assignment
+| Column | Type | Notes |
+|--------|------|-------|
+| `ClientId` | string | PK |
 | `ShardKey` | string | FK → ShardDefinition |
 
 ### Demo seed data
 
-| WorkAreaId | Shard |
-|------------|-------|
-| `11111111-1111-1111-1111-111111111111` | `shard-1` |
-| `22222222-2222-2222-2222-222222222222` | `shard-2` |
+| WorkAreaId | ClientId | Shard |
+|------------|----------|-------|
+| `11111111-1111-1111-1111-111111111111` | `client-1` | `shard-1` |
+| `22222222-2222-2222-2222-222222222222` | `client-2` | `shard-2` |
 
-New work areas (not in the table above) are assigned via round-robin on first write.
+Each demo shard has **two** read replicas (`shard-*-read-1`, `shard-*-read-2`) to illustrate multi-replica round-robin. A shard with **no** `ShardReadReplica` rows is valid — reads fall back to master.
+
+New work areas (not in the table above) are provisioned on first write: WorkAreaId → ClientId (mock external service or generated id) → shard via round-robin if the client has no shard yet.
 
 ---
 
@@ -228,19 +245,20 @@ New work areas (not in the table above) are assigned via round-robin on first wr
 
 ### Shard catalog
 
-The catalog is a **separate database** (`shard-catalog.db` in the POC). It answers one question:
+The catalog is a **separate database** (`shard-catalog.db` in the POC). It answers:
 
-> Given a `WorkAreaId`, which shard key should I use?
+> Given a `WorkAreaId`, which client and shard should I use — and which Key Vault secret names apply?
 
-Connection strings are **never** stored here — only Key Vault secret names on `ShardDefinition`.
+Connection strings are **never** stored here — only Key Vault secret names on `ShardDefinition` and `ShardReadReplica`.
 
 ### Resolution flow
 
 ```
 WorkAreaId
     → IShardCache (hit? return)
-    → ShardCatalog.WorkAreaShards (lookup ShardKey)
-    → ShardCatalog.Shards (get KeyVault secret name for intent)
+    → WorkAreaClientMapping (WorkAreaId → ClientId)
+    → ClientShardMapping (ClientId → ShardKey)
+    → ShardDefinition (+ ShardReadReplica rows for Read intent)
     → IKeyVaultSecretProvider (resolve connection string)
     → ShardInfo (cached)
     → ActionItemsDbContext
@@ -251,27 +269,35 @@ WorkAreaId
 ```csharp
 public enum ApplicationIntent
 {
-    Read,       // → ReadReplicaKeyVaultSecretName
+    Read,       // → read replica(s), or master if none configured
     ReadWrite   // → MasterKeyVaultSecretName
 }
 ```
 
+Read replicas are **optional per shard**. Each shard can have zero, one, or many `ShardReadReplica` rows:
+
+| Replicas configured | `ApplicationIntent.Read` behavior |
+|---------------------|-----------------------------------|
+| **0** | Falls back to `MasterKeyVaultSecretName` |
+| **1** | Always uses that replica |
+| **2+** | Round-robin across replicas (ordered by `Order`) |
+
 | Operation | Intent | Connection |
 |-----------|--------|------------|
-| GET entities / action items | `Read` | Read replica |
+| GET entities / action items | `Read` | Replica(s) if configured, otherwise master |
 | POST / PATCH / create / update | `ReadWrite` | Master |
 | Worker event processing | `ReadWrite` (hardcoded) | Master |
 
 In **SQL Server production**, Key Vault secrets contain the full connection string including `ApplicationIntent=ReadOnly` or `ApplicationIntent=ReadWrite`. DevOps manages failover and replication.
 
-In this **SQLite POC**, master and read replica are separate files (e.g. `shard-1.db` vs `shard-1-read.db`) to simulate the routing behaviour.
+In this **SQLite POC**, master and read replicas are separate files (e.g. `shard-1.db` vs `shard-1-read-1.db`, `shard-1-read-2.db`) to simulate the routing behaviour.
 
 ### Round-robin assignment
 
-When `IShardResolver.ResolveForCreationAsync` is called for an unmapped `WorkAreaId`:
+When `IShardResolver.ResolveForCreationAsync` is called for an unmapped work area:
 
-1. Pick next shard from `ShardDefinition` (thread-safe counter).
-2. Insert `WorkAreaShardMapping`.
+1. Resolve or create `WorkAreaClientMapping` (mock external provider or generated `client-{prefix}`).
+2. If the client has no shard, pick next shard from `ShardDefinition` (thread-safe counter) and insert `ClientShardMapping`.
 3. Resolve master connection string.
 4. Cache `ShardInfo` with `ApplicationIntent.ReadWrite`.
 
@@ -284,11 +310,15 @@ Used when creating the first entity for a new work area.
 ```json
 {
   "shard-1-master": "Data Source=shard-1.db",
-  "shard-1-read": "Data Source=shard-1-read.db",
+  "shard-1-read-1": "Data Source=shard-1-read-1.db",
+  "shard-1-read-2": "Data Source=shard-1-read-2.db",
   "shard-2-master": "Data Source=shard-2.db",
-  "shard-2-read": "Data Source=shard-2-read.db"
+  "shard-2-read-1": "Data Source=shard-2-read-1.db",
+  "shard-2-read-2": "Data Source=shard-2-read-2.db"
 }
 ```
+
+A shard that does not use read replicas needs only its `*-master` secret — omit replica secrets and `ShardReadReplica` rows for that shard.
 
 **Production:** Replace `IKeyVaultSecretProvider` with an Azure Key Vault implementation. The catalog schema stays the same — only secret names are stored.
 
@@ -399,11 +429,13 @@ Created in each host's working directory (`src/ActionItems.Api/` or `src/ActionI
 |------|---------|
 | `shard-catalog.db` | Shard catalog |
 | `shard-1.db` | Shard 1 master |
-| `shard-1-read.db` | Shard 1 read replica |
+| `shard-1-read-1.db` | Shard 1 read replica 1 |
+| `shard-1-read-2.db` | Shard 1 read replica 2 |
 | `shard-2.db` | Shard 2 master |
-| `shard-2-read.db` | Shard 2 read replica |
+| `shard-2-read-1.db` | Shard 2 read replica 1 |
+| `shard-2-read-2.db` | Shard 2 read replica 2 |
 
-`ShardDatabaseInitializer` seeds demo data and recreates schemas when the catalog model changes.
+`ShardDatabaseInitializer` **always wipes and recreates** all databases on host startup, then seeds demo catalog data (including two read replicas per shard).
 
 ---
 
@@ -521,9 +553,12 @@ services.AddSingleton<IKeyVaultSecretProvider, AzureKeyVaultSecretProvider>();
 
 Store secrets like:
 ```
-shard-1-master  → Server=...;Database=...;Application Intent=ReadWrite;...
-shard-1-read    → Server=...;Database=...;Application Intent=ReadOnly;...
+shard-1-master   → Server=...;Database=...;Application Intent=ReadWrite;...
+shard-1-read-1   → Server=...;Database=...;Application Intent=ReadOnly;...
+shard-1-read-2   → Server=...;Database=...;Application Intent=ReadOnly;...
 ```
+
+Register one `ShardReadReplica` row per read endpoint. Shards without replicas need only the master secret — `ApplicationIntent.Read` uses master when no replica rows exist.
 
 ### 3. Replace shard cache
 
@@ -541,7 +576,7 @@ Cache key format: `shard:workarea:{workAreaId}:intent:{Read|ReadWrite}`
 
 ### 5. What stays the same
 
-- Catalog schema (`ShardDefinition`, `WorkAreaShardMapping`)
+- Catalog schema (`ShardDefinition`, `ShardReadReplica`, `WorkAreaClientMapping`, `ClientShardMapping`)
 - `IShardResolver` / `IShardedScope` / repository pattern
 - `ApplicationIntent` routing
 - `AddActionItemsSdk` composition

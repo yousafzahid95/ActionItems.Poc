@@ -180,7 +180,7 @@ public sealed class ShardResolver : IShardResolver
         }
 
         var secretName = applicationIntent == ApplicationIntent.Read
-            ? await ResolveReadReplicaSecretNameAsync(shardKey, cancellationToken)
+            ? await ResolveReadSecretNameAsync(shardDefinition, cancellationToken)
             : shardDefinition.MasterKeyVaultSecretName;
 
         var connectionString = await _keyVaultSecretProvider.GetSecretAsync(secretName, cancellationToken);
@@ -188,17 +188,23 @@ public sealed class ShardResolver : IShardResolver
         return new ShardInfo(workAreaId, shardKey, connectionString, applicationIntent);
     }
 
-    private async Task<string> ResolveReadReplicaSecretNameAsync(string shardKey, CancellationToken cancellationToken)
+    /// <summary>
+    /// Resolves a read connection. Uses round-robin across configured replicas when present;
+    /// falls back to master when a shard has no read replicas (replicas are optional).
+    /// </summary>
+    private async Task<string> ResolveReadSecretNameAsync(
+        ShardDefinition shardDefinition,
+        CancellationToken cancellationToken)
     {
         var replicas = await _catalog.ShardReadReplicas
             .AsNoTracking()
-            .Where(x => x.ShardKey == shardKey)
+            .Where(x => x.ShardKey == shardDefinition.ShardKey)
             .OrderBy(x => x.Order)
             .ToListAsync(cancellationToken);
 
         if (replicas.Count == 0)
         {
-            throw new InvalidOperationException($"No read replicas are configured for shard '{shardKey}'.");
+            return shardDefinition.MasterKeyVaultSecretName;
         }
 
         var index = (_roundRobinCounter.Next() - 1) % replicas.Count;

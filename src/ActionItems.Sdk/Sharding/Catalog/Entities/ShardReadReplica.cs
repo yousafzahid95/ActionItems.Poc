@@ -7,4 +7,3 @@ public class ShardReadReplica
     public string KeyVaultSecretName { get; set; } = string.Empty;
     public int Order { get; set; }
 }
-
