@@ -6,13 +6,16 @@ namespace ActionItems.Sdk.ActionItems.DependencyInjection;
 
 public static class ActionItemsServiceCollectionExtensions
 {
-    public static IServiceCollection AddActionItemsPersistence(this IServiceCollection services)
-    {
-        services.AddScoped<IEntityRepository, EntityRepository>();
-        services.AddScoped<IActionItemRepository, ActionItemRepository>();
-        services.AddScoped<IActionItemService, ActionItemService>();
-        services.AddScoped<IEntityService, EntityService>();
+        public static IServiceCollection AddActionItemsPersistence(this IServiceCollection services)
+        {
+            services.AddScoped<IEntityRepository, EntityRepository>();
+            services.AddScoped<IActionItemRepository, ActionItemRepository>();
+            services.AddScoped<IActionItemService, ActionItemService>();
+            services.AddScoped<IEntityService, EntityService>();
 
-        return services;
-    }
+            // Generic EF repository for simple data access against ActionItemsDbContext
+            services.AddScoped(typeof(IRepository<>), typeof(EfRepository<>));
+
+            return services;
+        }
 }
