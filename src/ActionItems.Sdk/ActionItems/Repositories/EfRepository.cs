@@ -1,9 +1,13 @@
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Collections.Generic;
 using ActionItems.Sdk.Sharding;
 using Microsoft.EntityFrameworkCore;
 
 namespace ActionItems.Sdk.ActionItems.Repositories;
 
-public sealed class EfRepository<T> : IRepository<T> where T : class
+public class EfRepository<T> : IRepository<T> where T : class
 {
     private readonly ShardedDbContextHolder _holder;
 
@@ -17,7 +21,7 @@ public sealed class EfRepository<T> : IRepository<T> where T : class
         return _holder.DbContext.Set<T>().AsNoTracking();
     }
 
-    public async Task<IReadOnlyList<T>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async virtual Task<IReadOnlyList<T>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         return await _holder.DbContext.Set<T>()
             .AsNoTracking()
