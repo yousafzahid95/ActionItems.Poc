@@ -46,4 +46,15 @@ public sealed class ShardedScope : IShardedScope
         await dbContext.Database.EnsureCreatedAsync(cancellationToken);
         _holder.Attach(dbContext, applicationIntent);
     }
+
+    // Convenience overload that infers repository access from ApplicationIntent
+    public Task InitializeAsync(
+        Guid workAreaId,
+        ApplicationIntent applicationIntent,
+        CancellationToken cancellationToken = default)
+    {
+        // For the convenience overload we never force "Create" behavior.
+        // Always resolve via ResolveAsync so ApplicationIntent controls replica vs master selection.
+        return InitializeAsync(workAreaId, applicationIntent, ShardedRepositoryAccess.Read, cancellationToken);
+    }
 }

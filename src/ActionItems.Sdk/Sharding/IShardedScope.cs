@@ -11,4 +11,10 @@ public interface IShardedScope
         ApplicationIntent applicationIntent,
         ShardedRepositoryAccess access = ShardedRepositoryAccess.Read,
         CancellationToken cancellationToken = default);
+
+    // Convenience overload that infers repository access from ApplicationIntent
+    Task InitializeAsync(
+        Guid workAreaId,
+        ApplicationIntent applicationIntent,
+        CancellationToken cancellationToken = default);
 }
