@@ -9,7 +9,7 @@ namespace ActionItems.Sdk.ActionItems.Repositories;
 
 public class EfRepository<T> : IRepository<T> where T : class
 {
-    private readonly ShardedDbContextHolder _holder;
+    protected readonly ShardedDbContextHolder _holder;
 
     public EfRepository(ShardedDbContextHolder holder)
     {

@@ -4,35 +4,33 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ActionItems.Sdk.ActionItems.Repositories;
 
-public sealed class ActionItemRepository : IActionItemRepository
+public class ActionItemRepository : EfRepository<ActionItem>, IActionItemRepository
 {
-    private readonly ShardedDbContextHolder _holder;
-
     public ActionItemRepository(ShardedDbContextHolder holder)
+        : base(holder)
     {
-        _holder = holder;
     }
 
     public async Task<ActionItem?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        return await _holder.DbContext.ActionItems
-            .AsNoTracking()
+        return await Query()
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     }
 
     public async Task<IReadOnlyList<ActionItem>> GetByEntityIdAsync(Guid entityId, CancellationToken cancellationToken = default)
     {
-        return await _holder.DbContext.ActionItems
-            .AsNoTracking()
+        return await Query()
             .Where(x => x.EntityId == entityId)
             .OrderByDescending(x => x.CreatedAtUtc)
             .ToListAsync(cancellationToken);
     }
 
-    public Task<ActionItem> AddAsync(ActionItem actionItem, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<ActionItem>> GetAllByWorkAreaAsync(Guid workAreaId, CancellationToken cancellationToken = default)
     {
-        _holder.DbContext.ActionItems.Add(actionItem);
-        return Task.FromResult(actionItem);
+        return await Query()
+            .Where(x => x.WorkAreaId == workAreaId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .ToListAsync(cancellationToken);
     }
 
     public async Task<ActionItem?> UpdateStatusAsync(Guid id, string status, CancellationToken cancellationToken = default)
@@ -46,10 +44,5 @@ public sealed class ActionItemRepository : IActionItemRepository
         actionItem.Status = status;
         actionItem.UpdatedAtUtc = DateTime.UtcNow;
         return actionItem;
-    }
-
-    public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
-    {
-        return _holder.SaveChangesAsync(cancellationToken);
     }
 }

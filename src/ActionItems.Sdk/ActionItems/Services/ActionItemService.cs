@@ -57,6 +57,12 @@ public sealed class ActionItemService : IActionItemService
         return await _actionItemRepository.GetByEntityIdAsync(entityId, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<ActionItem>> GetAllByWorkAreaAsync(Guid workAreaId, CancellationToken cancellationToken = default)
+    {
+        await _shardedScope.InitializeAsync(workAreaId, ApplicationIntent.Read, cancellationToken: cancellationToken);
+        return await _actionItemRepository.GetAllByWorkAreaAsync(workAreaId, cancellationToken);
+    }
+
     public async Task<ActionItem?> UpdateStatusAsync(
         Guid workAreaId,
         Guid actionItemId,

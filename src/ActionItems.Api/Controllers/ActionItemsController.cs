@@ -48,6 +48,14 @@ public sealed class ActionItemsController : ControllerBase
         return Ok(actionItems);
     }
 
+    [HttpGet]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAllByWorkArea(Guid workAreaId, CancellationToken cancellationToken)
+    {
+        var actionItems = await _mediator.Send(new ActionItems.Api.Features.ActionItems.GetActionItemsByWorkAreaQuery(workAreaId), cancellationToken);
+        return Ok(actionItems);
+    }
+
     [HttpPatch("{actionItemId:guid}/status")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
